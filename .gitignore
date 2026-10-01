@@ -1,0 +1,7 @@
+__pycache__/
+*.sqlite3
+bm25_indexes/
+rag_db/
+knowledge_base_storage/
+.env
+.pytest_cache/

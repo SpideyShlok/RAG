@@ -1,0 +1,89 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.24-community
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-change_me_to_something_real}"
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"   # browser UI
+      - "7687:7687"   # bolt
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  chroma:
+    # NOTE: our code uses Chroma's embedded/persistent client (a local
+    # directory, not a server), so this container is not actually used by
+    # app/worker as configured. It's left here, disabled by default, for
+    # anyone who wants to switch tenant_registry.py to Chroma's HttpClient
+    # instead of the embedded client (recommended if you outgrow one box).
+    image: chromadb/chroma:0.5.20
+    profiles: ["chroma-server"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      NEO4J_URI: "neo4j://neo4j:7687"
+      REDIS_URL: "redis://redis:6379/0"
+      CHROMA_PERSIST_DIRECTORY: "/data/rag_db"
+      APP_DB_PATH: "/data/app_data.sqlite3"
+      BM25_INDEX_DIR: "/data/bm25_indexes"
+      KNOWLEDGE_BASE_DIR: "/data/knowledge_base_storage"
+    ports:
+      - "5000:5000"
+    volumes:
+      - app_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    env_file: .env
+    environment:
+      NEO4J_URI: "neo4j://neo4j:7687"
+      REDIS_URL: "redis://redis:6379/0"
+      CHROMA_PERSIST_DIRECTORY: "/data/rag_db"
+      APP_DB_PATH: "/data/app_data.sqlite3"
+      BM25_INDEX_DIR: "/data/bm25_indexes"
+      KNOWLEDGE_BASE_DIR: "/data/knowledge_base_storage"
+    volumes:
+      - app_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    # Scale this service (docker compose up --scale worker=3) to parallelize indexing.
+
+volumes:
+  redis_data:
+  neo4j_data:
+  chroma_data:
+  app_data:
